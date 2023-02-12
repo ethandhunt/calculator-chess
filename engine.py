@@ -40,8 +40,8 @@ WHITE = True # a1:h2, K
 BLACK = False # a8:h7, k
 
 PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING = range(1, 7)
-PIECE_CHAR = dict(zip(range(1, 7), 'prnbqk'))
-CHAR_PIECE = dict(zip('prnbqk', range(1, 7)))
+PIECE_TO_CHAR = dict(zip(range(1, 7), 'prnbqk'))
+CHAR_TO_PIECE = dict(zip('prnbqk', range(1, 7)))
 
 piece_value = {
     PAWN: 100,
@@ -178,7 +178,6 @@ class Board:
         sq = A1
         for y, row in enumerate(fen_board.split('/')):
             for x, p in enumerate(row):
-                sq += 1
                 # implement
                 # p ==  n: digit -> skip n iter
                 # incorrect if p == 9, but thats an invalid fen string anyway so only reason to raise an error would be validation checks (straightforward validation checks anyway, if the whole thing is doing weird stuff thats a validation check for the fen string /and/ the code)
@@ -188,8 +187,9 @@ class Board:
 
                 if p.isdigit():
                     c = int(p)
+                    continue
 
-                self.pieces.append(Piece(p, sq))
+                self.pieces.append(Piece(p, x+y*8))
 
         def set_endgame(self):
             # Set if both sides have no queens, or sides w/ queens only have max 1 extra pawn
@@ -240,13 +240,18 @@ class Move:
         self.to_square = to_square
 
 class Piece:
-    def __init__(self, piece_type, square):
-        self.piece_type = piece_type
-        self.side = WHITE if piece_type.isupper() else BLACK
+    def __init__(self, piece_as_char, square):
+        self.piece_type = CHAR_TO_PIECE[piece_as_char.lower()]
+        self.side = WHITE if piece_as_char.isupper() else BLACK
         self.square = square
     
     def __eq__(self, piece_type):
         return self.piece_type == piece_type
+
+    def __repr__(self):
+        ret = PIECE_TO_CHAR[self.piece_type]
+        ret = ret.upper() if self.side == WHITE else ret.lower()
+        return ret + '@' + str(self.square)
     
 drint(__file__, 'tl done')
 
