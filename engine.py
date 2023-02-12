@@ -40,8 +40,8 @@ WHITE = True # a1:h2, K
 BLACK = False # a8:h7, k
 
 PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING = range(1, 7)
-PIECE_TO_CHAR = dict(zip(range(1, 7), 'prnbqk'))
-CHAR_TO_PIECE = dict(zip('prnbqk', range(1, 7)))
+PIECE_TO_CHAR = dict(zip(range(1, 7), 'PRNBQK'))
+CHAR_TO_PIECE = dict(zip('PRNBQK', range(1, 7)))
 
 piece_value = {
     PAWN: 100,
@@ -149,7 +149,7 @@ SQUARES = [
     A6, B6, C6, D6, E6, F6, G6, H6,
     A7, B7, C7, D7, E7, F7, G7, H7,
     A8, B8, C8, D8, E8, F8, G8, H8,
-] = range(8*8)
+] = list(range(8*8))
 
 # bitmask
 BB_SQUARES = [
@@ -163,6 +163,8 @@ BB_SQUARES = [
     BB_A8, BB_B8, BB_C8, BB_D8, BB_E8, BB_F8, BB_G8, BB_H8,
 ] = [1 << sq for sq in SQUARES] # [0b1, 0b10, 0b100, ...]
 
+SQUARE_NAMES = [x+y for x in 'ABCEDFGH' for y in '12345678'] # ['A1', 'A2', 'A3', ..., 'H6', 'H7', 'H8']
+
 STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 class Board:
     def __init__(self, fen_string=STARTING_FEN):
@@ -174,9 +176,9 @@ class Board:
         self.castling_rights = (BB_A1 * ('k' in fen_castle) | BB_H1 * ('q' in fen_castle) | BB_A8 * ('K' in fen_castle) | BB_H8 * ('Q' in fen_castle))
         
         # populate 
-        c = 0
         sq = A1
         for y, row in enumerate(fen_board.split('/')):
+            c = 0
             for x, p in enumerate(row):
                 # implement
                 # p ==  n: digit -> skip n iter
@@ -235,13 +237,36 @@ class Board:
         return ret
 
 class Move:
-    def __init__(self, from_square: Square, to_Square: Square, captured_piece):
+    def __init__(self, from_square: Square, to_square: Square, promotion=None):
         self.from_square = from_square
         self.to_square = to_square
+        self.promotion = promotion
+    
+    def uci(self):
+        promotion = PIECE_TO_CHAR[self.promotion] if self.promotion else ''
+        promotion = promotion.upper()
+        return SQUARE_NAMES[self.from_square] + SQUARE_NAMES[self.to_square] + promotion
+        # examples:
+        # A1B1 (any piece that was on A1 moved to B1)
+        # D7D8Q (piece at D7 goes to D8 and turns into a queeen)
+    
+    def from_uci(uci: str):
+        try:
+            from_square = SQUARE_NAMES.index(uci[0:2])
+            to_square = SQUARE_NAMES.index(uci[2:4])
+            promotion = CHAR_TO_PIECE[uci[4]] if len(uci) == 5 else None
+            
+            return Move(from_square, to_square, promotion)
+            
+        except ValueError:
+            raise ValueError('Invalid UCI string: ' + repr(uci))
+    
+    def __repr__(self):
+        return self.uci()
 
 class Piece:
     def __init__(self, piece_as_char, square):
-        self.piece_type = CHAR_TO_PIECE[piece_as_char.lower()]
+        self.piece_type = CHAR_TO_PIECE[piece_as_char.upper()]
         self.side = WHITE if piece_as_char.isupper() else BLACK
         self.square = square
     
@@ -258,3 +283,5 @@ drint(__file__, 'tl done')
 b = Board()
 for p in b.pieces:
     print(p)
+
+print(Move.from_uci('A1B2Q'))
