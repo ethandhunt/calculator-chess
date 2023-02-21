@@ -151,6 +151,12 @@ SQUARES = [
     A8, B8, C8, D8, E8, F8, G8, H8,
 ] = list(range(8*8))
 
+SQUARE_NAMES = [x+y for y in '12345678' for x in 'ABCDEFGH'] # ['A1', 'A2', 'A3', ..., 'H6', 'H7', 'H8']
+
+RANKS = [
+    RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8
+] = [list(range(8*i, 8*i+8)) for i in range(8)]
+
 # bitmask
 BB_SQUARES = [
     BB_A1, BB_B1, BB_C1, BB_D1, BB_E1, BB_F1, BB_G1, BB_H1,
@@ -163,9 +169,18 @@ BB_SQUARES = [
     BB_A8, BB_B8, BB_C8, BB_D8, BB_E8, BB_F8, BB_G8, BB_H8,
 ] = [1 << sq for sq in SQUARES] # [0b1, 0b10, 0b100, ...]
 
-SQUARE_NAMES = [x+y for x in 'ABCEDFGH' for y in '12345678'] # ['A1', 'A2', 'A3', ..., 'H6', 'H7', 'H8']
+BB_ALL = 0xffffffffffffffff
 
-STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+BB_RANKS = [
+    BB_RANK_1, BB_RANK_2, BB_RANK_3, BB_RANK_4, BB_RANK_5, BB_RANK_6, BB_RANK_7, BB_RANK_8
+] = [0xff for _ in range(8)] # [0xff, 0xff00, 0xff0000, ...]
+
+BB_FILES = [
+    BB_FILE_A, BB_FILE_B, BB_FILE_C, BB_FILE_D, BB_FILE_E, BB_FILE_F, BB_FILE_G, BB_FILE_H
+] = [0x0101010101010101 << i for i in range(8)]
+
+
+STARTING_FEN = 'RNBQKBNR/PPPPPPPP/8/8/8/8/pppppppp/rnbqkbnr w KQkq - 0 1'
 class Board:
     def __init__(self, fen_string=STARTING_FEN):
         self.pieces = []
@@ -175,23 +190,18 @@ class Board:
         self.turn = fen_turn == 'w'
         self.castling_rights = (BB_A1 * ('k' in fen_castle) | BB_H1 * ('q' in fen_castle) | BB_A8 * ('K' in fen_castle) | BB_H8 * ('Q' in fen_castle))
         
+        self.occupied_mask = {WHITE:BB_RANK_1, BLACK:BB_RANK_8}
+        
         # populate 
         sq = A1
         for y, row in enumerate(fen_board.split('/')):
             c = 0
             for x, p in enumerate(row):
-                # implement
-                # p ==  n: digit -> skip n iter
-                # incorrect if p == 9, but thats an invalid fen string anyway so only reason to raise an error would be validation checks (straightforward validation checks anyway, if the whole thing is doing weird stuff thats a validation check for the fen string /and/ the code)
-                if c:
-                    c -= 1
-                    continue
-
                 if p.isdigit():
-                    c = int(p)
+                    c += int(p) - 1 # 1 is ignored
                     continue
 
-                self.pieces.append(Piece(p, x+y*8))
+                self.pieces.append(Piece(p, x+c+y*8))
 
         def set_endgame(self):
             # Set if both sides have no queens, or sides w/ queens only have max 1 extra pawn
@@ -236,6 +246,17 @@ class Board:
         
         return ret
 
+    def show_moves(self):
+        for p in b.pieces:
+            print(p, end=' -> ')
+            available = []
+            pmove_mask = p.passive_move_mask([0, 0])
+            for x in range(64):
+                if pmove_mask & 2**x:
+                    available.append(SQUARE_NAMES[x])
+
+            print(', '.join(available))
+
 class Move:
     def __init__(self, from_square: Square, to_square: Square, promotion=None):
         self.from_square = from_square
@@ -244,7 +265,6 @@ class Move:
     
     def uci(self):
         promotion = PIECE_TO_CHAR[self.promotion] if self.promotion else ''
-        promotion = promotion.upper()
         return SQUARE_NAMES[self.from_square] + SQUARE_NAMES[self.to_square] + promotion
         # examples:
         # A1B1 (any piece that was on A1 moved to B1)
@@ -269,6 +289,7 @@ class Piece:
         self.piece_type = CHAR_TO_PIECE[piece_as_char.upper()]
         self.side = WHITE if piece_as_char.isupper() else BLACK
         self.square = square
+        self.bb_square = 2**square
     
     def __eq__(self, piece_type):
         return self.piece_type == piece_type
@@ -276,12 +297,107 @@ class Piece:
     def __repr__(self):
         ret = PIECE_TO_CHAR[self.piece_type]
         ret = ret.upper() if self.side == WHITE else ret.lower()
-        return ret + '@' + str(self.square)
+        return ret + '@' + SQUARE_NAMES[self.square]
+
+    def passive_move_mask(self, occupied_mask):
+        '''
+        Generates move mask
+        Ignores discovered check
+        Continuous moves are constrained by the presence of pieces in the way
+        '''
+        move_mask = 0
+        MY = 8 # Move Y axis
+        MX = 1 # Move X axis
+        
+        can_exit = False
+        # Noncontinuous pass
+        if self.piece_type == PAWN:
+            can_exit = True
+            
+            # on bitboard, [x+8] is y+1
+            starting_rank = RANK_2 if self.side == WHITE else RANK_7
+            
+            if self.square in starting_rank:
+                move_mask |= (self.bb_square << (2*MY)) if self.side == WHITE else (self.bb_square >> (2*MY))
+            
+            move_mask |= (self.bb_square << MY) if self.side == WHITE else (self.bb_square >> MY)
+        
+        elif self.piece_type == KNIGHT:
+            can_exit = True
+
+            # cfs = [MX*x + MY*y for x in [-1, 1] for y in [-2, 2] if (self.square + x)//8 == self.square//8]+ [MX*x + MY*y for x in [-2, 2] for y in [-1, 1] if (self.square + x)//8 == self.square//8]# Coefficients [(-1, -2), (1, -2), ..., (-2, -1), (2, -1), ...]
+            cfs = []
+            condition = lambda x, y: (self.square + x)//8 == self.square//8 and 0 <= MX*x + MY*y + self.square < 64
+            for i in [-1, 1]:
+                for j in [-2, 2]:
+                    if condition(i, j):
+                        cfs.append(MX*i + MY*j)
+                    
+                    if condition(j, i):
+                        cfs.append(MX*j + MY*i)
+                    
+            for c in cfs:
+                if c >= 0:
+                    move_mask |= (self.bb_square << c)
+
+                else:
+                    move_mask |= (self.bb_square >> -c)
+            
+        elif self.piece_type == KING:
+            can_exit = True
+            
+            # wrap around, on board, king can't move by not moving
+            # condition = lambda x, y: ((self.square + x)//8 == self.square//8) and (0 <= MX*x + MY*y + self.square < 64) and (x*y != 0)
+            for x in [-1, 0, 1]:
+                for y in [-1, 0, 1]:
+                    #if condition(x, y):
+                    
+                    # wrap around
+                    if (self.square + x)//8 != self.square//8:
+                        continue
+                    
+                    if not 0 <= (self.square + MX*x + MY*y) < 64:
+                        continue
+                    
+                    if x == y == 0:
+                        continue
+
+                    if x*MX + y*MY >= 0:
+                        move_mask |= self.bb_square << (x*MX + y*MY)
+
+                    else:                        
+                        move_mask |= self.bb_square >> -(x*MX + y*MY)
+        
+        if can_exit:
+            move_mask &= BB_ALL
+            move_mask &= ~occupied_mask[self.side]
+            move_mask &= ~occupied_mask[not self.side]
+            return move_mask
+        
+        # Continuous move pass
+            
+        if self.piece_type == ROOK:
+            for dx in [-1, 1]:
+                pass
+            
+            for dy in [-1, 1]:
+                pass
+        
+        elif self.piece_type == BISHOP:
+            pass
+            
+        elif self.piece_type == QUEEN:
+            pass
+        
+        return 0
+            
+    def attack_mask(self, occupied_mask, en_passant_mask):
+        pass
+        
+    
     
 drint(__file__, 'tl done')
 
+# b = Board('7P/8/8/8/8/8/8/8 w KQkq - 0 1')
 b = Board()
-for p in b.pieces:
-    print(p)
-
-print(Move.from_uci('A1B2Q'))
+b.show_moves()
