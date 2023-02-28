@@ -185,12 +185,14 @@ class Board:
     def __init__(self, fen_string=STARTING_FEN):
         self.pieces = []
         self.move_stack = []
+        self.inactive_pieces = [] # subset of self.pieces
 
         fen_board, fen_turn, fen_castle, fen_en_passant, fen_half_move, fen_full_move = fen_string.split(' ')
         self.turn = fen_turn == 'w'
-        self.castling_rights = (BB_A1 * ('k' in fen_castle) | BB_H1 * ('q' in fen_castle) | BB_A8 * ('K' in fen_castle) | BB_H8 * ('Q' in fen_castle))
+        self.castling_rights = {WHITE:[CHAR_TO_PIECE[x.upper()] for x in fen_castle if x.islower()], BLACK:[CHAR_TO_PIECE[x.upper()] for x in fen_castle if x.isupper()]}
+        self.en_passant_square = SQUARE_NAMES.index(fen_en_passant) if fen_en_passant != '-' else None
         
-        self.occupied_mask = {WHITE:BB_RANK_1, BLACK:BB_RANK_8}
+        self.occupied_mask = {WHITE:0, BLACK:0}
         
         # populate 
         sq = A1
@@ -201,7 +203,9 @@ class Board:
                     c += int(p) - 1 # 1 is ignored
                     continue
 
-                self.pieces.append(Piece(p, x+c+y*8))
+                pi = Piece(p, x+c+y*8)
+                self.pieces.append(pi)
+                self.occupied_mask[pi.side] |= pi.bb_square
 
         def set_endgame(self):
             # Set if both sides have no queens, or sides w/ queens only have max 1 extra pawn
@@ -231,14 +235,20 @@ class Board:
         self.endgame = set_endgame(self)
             
 
-    def piece_at(self, x, y):
+    def piece_at(self, s):
+        '''
+        returns the active piece at x, y
+        '''
         for p in self.pieces:
-            if p.square == x + y * 8:
+            if p.square == s and p.active:
                 return p
         
         return None
 
     def pieces_of(self, side):
+        '''
+        returns active pieces
+        '''
         ret = []
         for p in self.pieces:
             if p.side == side:
@@ -249,29 +259,57 @@ class Board:
     def show_moves(self):
         for p in b.pieces:
             print(p, end=' -> ')
-            available = []
-            pmove_mask = p.passive_move_mask([0, 0])
-            for x in range(64):
-                if pmove_mask & 2**x:
-                    available.append(SQUARE_NAMES[x])
+            moves = p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights)
+            print(', '.join(map(Move.uci, moves)))
+    
+    def push(self, move):
+        drint('Board.push(' + str(move) + ')')
+        self.move_stack.append(move)
 
-            print(', '.join(available))
+        if move.attacking:
+            self.inactive_pieces.append(self.piece_at(move.captured))
+            self.piece_at(move.captured).active = False
+        
+        self.piece_at(move.from_square).square = move.to_square
+        
+        if move.castling:
+            self.piece_at(move.castle_from).square = move.castle_to
+        
+    
+    def pop(self):
+        move = self.move_stack.pop()
+        
+        if move.attacking:
+            self
 
 class Move:
-    def __init__(self, from_square: Square, to_square: Square, promotion=None):
+    def __init__(self, from_square: Square, to_square: Square, promotion=None, attacking=False, castling=False, castle_from: Square=None, castle_to: Square=None, captured=None):
         self.from_square = from_square
         self.to_square = to_square
         self.promotion = promotion
+        self.attacking = attacking
+        self.castling = castling
+        self.castle_from = castle_from
+        self.castle_to = castle_to
+        self.captured = captured
     
     def uci(self):
         promotion = PIECE_TO_CHAR[self.promotion] if self.promotion else ''
-        return SQUARE_NAMES[self.from_square] + SQUARE_NAMES[self.to_square] + promotion
+        if self.castling:
+            return '-'.join((['O']*abs(self.castle_from - self.castle_to)))
+        return SQUARE_NAMES[self.from_square].lower() + 'x' * self.attacking + SQUARE_NAMES[self.to_square].lower() + promotion
         # examples:
         # A1B1 (any piece that was on A1 moved to B1)
         # D7D8Q (piece at D7 goes to D8 and turns into a queeen)
     
     def from_uci(uci: str):
         try:
+            if uci == 'O-O-O':
+                return Move(castling=True)
+            
+            elif uci == 'O-O':
+                return Move(castling=True)
+
             from_square = SQUARE_NAMES.index(uci[0:2])
             to_square = SQUARE_NAMES.index(uci[2:4])
             promotion = CHAR_TO_PIECE[uci[4]] if len(uci) == 5 else None
@@ -285,11 +323,12 @@ class Move:
         return self.uci()
 
 class Piece:
-    def __init__(self, piece_as_char, square):
+    def __init__(self, piece_as_char, square, active=True):
         self.piece_type = CHAR_TO_PIECE[piece_as_char.upper()]
         self.side = WHITE if piece_as_char.isupper() else BLACK
         self.square = square
         self.bb_square = 2**square
+        self.active = active
     
     def __eq__(self, piece_type):
         return self.piece_type == piece_type
@@ -299,13 +338,13 @@ class Piece:
         ret = ret.upper() if self.side == WHITE else ret.lower()
         return ret + '@' + SQUARE_NAMES[self.square]
 
-    def passive_move_mask(self, occupied_mask):
+    def moves(self, occupied_mask, en_passant_square, castling_rights):
         '''
         Generates move mask
         Ignores discovered check
         Continuous moves are constrained by the presence of pieces in the way
         '''
-        move_mask = 0
+        moves = []
         MY = 8 # Move Y axis
         MX = 1 # Move X axis
         
@@ -314,90 +353,177 @@ class Piece:
         if self.piece_type == PAWN:
             can_exit = True
             
+            same_rank = lambda a, b: a//8 == b//8
+            on_occupied = lambda x: (occupied_mask[self.side]|occupied_mask[not self.side]) & 2**x
             # on bitboard, [x+8] is y+1
             starting_rank = RANK_2 if self.side == WHITE else RANK_7
             
-            if self.square in starting_rank:
-                move_mask |= (self.bb_square << (2*MY)) if self.side == WHITE else (self.bb_square >> (2*MY))
+            tup = (self.square + 2*MY) if self.side == WHITE else (self.square - 2*MY)
+            if self.square in starting_rank and not on_occupied(tup):
+                moves.append(Move(self.square, tup))
             
-            move_mask |= (self.bb_square << MY) if self.side == WHITE else (self.bb_square >> MY)
+            up = (self.square + MY) if self.side == WHITE else (self.square - MY)
+            if 0 <= up < 64 and not on_occupied(up):
+                moves.append(Move(self.square, up))
+            
+            left = up - MX
+            right = up + MX
+
+            if same_rank(up, left) and occupied_mask[not self.side] & 2**left:
+                moves.append(Move(self.square, left, attacking=True, captured=left))
+            
+            if same_rank(up, right) and occupied_mask[not self.side] & 2**right:
+                moves.append(Move(self.square, right, attacking=True, captured=left))
         
         elif self.piece_type == KNIGHT:
             can_exit = True
 
-            # cfs = [MX*x + MY*y for x in [-1, 1] for y in [-2, 2] if (self.square + x)//8 == self.square//8]+ [MX*x + MY*y for x in [-2, 2] for y in [-1, 1] if (self.square + x)//8 == self.square//8]# Coefficients [(-1, -2), (1, -2), ..., (-2, -1), (2, -1), ...]
-            cfs = []
-            condition = lambda x, y: (self.square + x)//8 == self.square//8 and 0 <= MX*x + MY*y + self.square < 64
+            # no wrap around, on board, not attacking own piece
+            condition = lambda x, y: (self.square + x)//8 == self.square//8 and 0 <= MX*x + MY*y + self.square < 64 and not 2**(self.square+x*MX+y*MY) & occupied_mask[self.side]
+            attacking = lambda x, y: 2**(self.square + x*MX + y*MY) & occupied_mask[not self.side]
             for i in [-1, 1]:
                 for j in [-2, 2]:
                     if condition(i, j):
-                        cfs.append(MX*i + MY*j)
+                        moves.append(Move(self.square, self.square + MX*i + MY*j, attacking=attacking(i, j), captured=self.square + MX*I + MY*j))
                     
                     if condition(j, i):
-                        cfs.append(MX*j + MY*i)
+                        moves.append(Move(self.square, self.square + MX*j + MY*i, attacking=attacking(j, i), captured=self.square + MX*j + MY*i))
                     
-            for c in cfs:
-                if c >= 0:
-                    move_mask |= (self.bb_square << c)
-
-                else:
-                    move_mask |= (self.bb_square >> -c)
             
         elif self.piece_type == KING:
             can_exit = True
             
+            attacking = lambda x, y: 2**(self.square + x*MX + y*MY) & occupied_mask[not self.side]
             # wrap around, on board, king can't move by not moving
             # condition = lambda x, y: ((self.square + x)//8 == self.square//8) and (0 <= MX*x + MY*y + self.square < 64) and (x*y != 0)
             for x in [-1, 0, 1]:
                 for y in [-1, 0, 1]:
                     #if condition(x, y):
                     
-                    # wrap around
+                    # prevent wrap around
                     if (self.square + x)//8 != self.square//8:
                         continue
                     
+                    # chess isn't open world yet
                     if not 0 <= (self.square + MX*x + MY*y) < 64:
                         continue
                     
+                    # king can't move by not moving
                     if x == y == 0:
                         continue
+                    
+                    # king can't take own piece
+                    if occupied_mask[self.side] & 2**(self.square + x*MX + y*MY):
+                        continue
 
-                    if x*MX + y*MY >= 0:
-                        move_mask |= self.bb_square << (x*MX + y*MY)
 
-                    else:                        
-                        move_mask |= self.bb_square >> -(x*MX + y*MY)
-        
-        if can_exit:
-            move_mask &= BB_ALL
-            move_mask &= ~occupied_mask[self.side]
-            move_mask &= ~occupied_mask[not self.side]
-            return move_mask
+                    moves.append(Move(self.square, self.square + x*MX + y*MY, attacking=attacking(x, y), captured=self.square + x*MX + y*MY))
+            
+            # castling
+            # moving through check must be caught externally
+            # assumes that the rook and king are in the correct spots and castling rights are accurate
+            rank = BB_RANK_1 if self.side == WHITE else BB_RANK_8
+            if KING in castling_rights[self.side]:
+                # check if any piece is preventing the castle by existing in between the castle and the king
+                if not (BB_FILE_F | BB_FILE_G) & rank & (occupied_mask[self.side] | occupied_mask[not self.side]):
+                    moves.append(Move(self.square, self.square + 2, castling=True, castle_from=self.square + 3, castle_to=self.square + 1))
+            
+            if QUEEN in castling_rights[self.side]:
+                if not (BB_FILE_C | BB_FILE_D) & rank & (occupied_mask[self.side] | occupied_mask[not self.side]):
+                    moves.append(Move(self.square, self.square - 2, castling=True, castle_from=self.square - 4, castle_to=self.square - 1))
+            
         
         # Continuous move pass
+        elif self.piece_type == ROOK:
+            can_exit = True
             
-        if self.piece_type == ROOK:
-            for dx in [-1, 1]:
-                pass
+            move_squares = []
+            on_same_rank = lambda dx: (self.square + dx*MX)//8 == self.square//8
+            on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
+            on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
+
+            for ix in [-1, 1]:
+                dx = ix
+                while on_same_rank(dx) and on_board(dx, 0) and not on_occupied(dx, 0):
+                    moves.append(Move(self.square, self.square + dx*MX))
+                    dx += ix
+                    
+                # attacking
+                if on_board(dx, 0) and not occupied_mask[self.side] & 2**(self.square + dx*MX):
+                    moves.append(Move(self.square, self.square + dx*MX, attacking=True))
             
-            for dy in [-1, 1]:
-                pass
+            for iy in [-1, 1]:
+                dy = iy
+                while on_board(0, dy) and not on_occupied(0, dy):
+                    moves.append(Move(self.square, self.square + dy*MY))
+                    dy += iy
+                
+                # attacking
+                if on_board(0, dy) and not occupied_mask[self.side] & 2**(self.square + dy*MY):
+                    moves.append(Move(self.square, self.square + dy*MY, attacking=True))
         
         elif self.piece_type == BISHOP:
-            pass
+            can_exit = True
+
+            on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
+            on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
+            no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
+            
+            for ix in [-1, 1]:
+                for iy in [-1, 1]:
+                    dx = ix
+                    dy = iy
+                    while no_wrap_around(dx) and on_board(dx, dy) and not on_occupied(dx, dy):
+                        moves.append(Move(self.square, self.square + dx*MX + dy*MY))
+                        dx += ix
+                        dy += iy
+
+                    # attacking
+                    if no_wrap_around(dx) and on_board(dx, dy) and not occupied_mask[self.side] & 2**(self.square + dx*MX + dy*MY):
+                        moves.append(Move(self.square, self.square + dy*MY, attacking=True))
             
         elif self.piece_type == QUEEN:
-            pass
+            can_exit = True
+            
+            on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
+            on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY)) & (occupied_mask[self.side]|occupied_mask[not self.side])
+            no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
+            
+            for ix in [-1, 0, 1]:
+                for iy in [-1, 0, 1]:
+                    if ix == iy == 0:
+                        continue
+                    
+                    dx = ix
+                    dy = iy
+                    while no_wrap_around(dx) and on_board(dx, dy) and not on_occupied(dx, dy):
+                        moves.append(Move(self.square, self.square + dx*MX + dy*MY))
+                        dx += ix
+                        dy += iy
+
+                    # attacking
+                    if on_board(dy, dy) and not occupied_mask[self.side] & 2**(self.square + dy*MY):
+                        moves.append(Move(self.square, self.square + dy*MY, attacking=True))
+            
+        if can_exit:
+            return moves
         
+        drint('piece type fell through in Piece.passive_move_mask(occupied_mask)')
+        input('read error pls')
         return 0
             
-    def attack_mask(self, occupied_mask, en_passant_mask):
+    def attack_move_mask(self, occupied_mask, en_passant_square):
         pass
         
     
     
 drint(__file__, 'tl done')
 
-# b = Board('7P/8/8/8/8/8/8/8 w KQkq - 0 1')
-b = Board()
+in_fen = input('fen: ')
+if in_fen == '':
+    in_fen = STARTING_FEN
+    # in_fen = 'RNBQKBNR/8/8/8/8/8/8/rnbqkbnr w KQkq - 0 1'
+
+b = Board(in_fen)
 b.show_moves()
+# b.push(Move(from_square=E2, to_square=E4))
