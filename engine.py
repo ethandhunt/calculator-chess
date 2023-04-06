@@ -260,6 +260,7 @@ class Board:
 
     def show_moves(self):
         for p in self.pieces:
+            if p.side != self.turn or not p.active: continue
             print(p, end=' -> ')
             moves = p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights)
             print(', '.join(map(Move.uci, moves)))
@@ -267,7 +268,10 @@ class Board:
     def moves(self):
         moves = []
         for p in self.pieces:
-            moves.append(p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights))
+            if p.side != self.turn or not p.active: continue
+            for m in p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights):
+                moves.append(m)
+                
         return moves
     
     def push(self, move):
@@ -276,8 +280,8 @@ class Board:
         side = self.piece_at(move.from_square).side
 
         if move.attacking:
-            self.inactive_pieces.append(self.piece_at(move.captured))
             self.piece_at(move.captured).active = False
+            self.inactive_pieces.append(self.piece_at(move.captured))
         
         self.piece_at(move.from_square).square = move.to_square
         self.occupied_mask[side] &= ~BB_SQUARES[move.from_square]
@@ -338,11 +342,20 @@ class Move:
                 if context.turn == BLACK:
                     return Move(E8, G8, castle_from=H8, castle_to=F8, castling=True)
 
+            attacking = 'x' in uci
+            uci = uci.replace('x', '')
             from_square = SQUARE_NAMES.index(uci[0:2])
             to_square = SQUARE_NAMES.index(uci[2:4])
             promotion = CHAR_TO_PIECE[uci[4]] if len(uci) == 5 else None
             
-            return Move(from_square, to_square, promotion)
+            captured = None
+            if attacking:
+                captured = to_square
+                if len(uci) == len('a5xb5b6')-1: # 'x' is removed
+                    to_square = SQUARE_NAMES.index(uci[4:6])
+                
+            
+            return Move(from_square, to_square, attacking=attacking, captured=captured, promotion=promotion)
             
         except ValueError:
             raise ValueError('Invalid UCI string: ' + repr(uci))
@@ -540,7 +553,7 @@ class Piece:
         drint('piece type fell through in Piece.passive_move_mask(occupied_mask)')
         input('read error pls')
         return 0
-            
+
     def attack_move_mask(self, occupied_mask, en_passant_square):
         pass
         
@@ -555,13 +568,15 @@ if __name__ == '__main__':
         # in_fen = 'RNBQKBNR/8/8/8/8/8/8/rnbqkbnr w KQkq - 0 1'
 
     b = Board(in_fen)
-    b.show_moves()
-    b.push(Move(from_square=E2, to_square=E4))
-    b.push(Move(from_square=E7, to_square=E5))
-    b.push(Move(from_square=F1, to_square=E2))
-    b.push(Move(from_square=D7, to_square=D6))
-    b.push(Move(from_square=G1, to_square=F3))
-    b.push(Move(from_square=F7, to_square=F6))
-    b.show_moves()
-    b.push(Move.from_uci("O-O", context=b))
-    b.show_moves()
+    b.push(Move.from_uci("C2C4"))
+    b.push(Move.from_uci("C7C6"))
+    b.push(Move.from_uci("C4C5"))
+    b.push(Move.from_uci("D8A5"))
+    b.push(Move.from_uci("G2G3"))
+    b.push(Move.from_uci("A5C3"))
+    b.push(Move.from_uci("F2F4"))
+    b.push(Move.from_uci("A7A5"))
+    b.push(Move.from_uci("E2E3"))
+    b.push(Move.from_uci("B8A6"))
+    b.push(Move.from_uci("D2xC3"))
+    b.moves()
