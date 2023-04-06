@@ -188,9 +188,10 @@ class Board:
         self.inactive_pieces = [] # subset of self.pieces
 
         fen_board, fen_turn, fen_castle, fen_en_passant, fen_half_move, fen_full_move = fen_string.split(' ')
-        self.turn = fen_turn == 'w'
+        self.turn = WHITE if fen_turn == 'w' else BLACK
         # {WHITE: [KING, QUEEN], BLACK: [KING, QUEEN]}
         self.castling_rights = {WHITE:[CHAR_TO_PIECE[x.upper()] for x in fen_castle if x.islower()], BLACK:[CHAR_TO_PIECE[x.upper()] for x in fen_castle if x.isupper()]}
+        self.prev_castling_rights = []
         self.en_passant_square = SQUARE_NAMES.index(fen_en_passant) if fen_en_passant != '-' else None
         
         self.occupied_mask = {WHITE:0, BLACK:0}
@@ -263,25 +264,42 @@ class Board:
             moves = p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights)
             print(', '.join(map(Move.uci, moves)))
     
+    def moves(self):
+        moves = []
+        for p in b.pieces:
+            moves.append(p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights))
+    
     def push(self, move):
         drint('Board.push(' + str(move) + ')')
         self.move_stack.append(move)
+        side = self.piece_at(move.from_square).side
 
         if move.attacking:
             self.inactive_pieces.append(self.piece_at(move.captured))
             self.piece_at(move.captured).active = False
         
         self.piece_at(move.from_square).square = move.to_square
+        self.occupied_mask[side] &= ~BB_SQUARES[move.from_square]
+        self.occupied_mask[side] |= BB_SQUARES[move.to_square]
         
         if move.castling:
             self.piece_at(move.castle_from).square = move.castle_to
+            self.prev_castling_rights.append(self.castling_rights)
+            self.castling_rights[side] = []
+        
+        self.turn = not self.turn
         
     
     def pop(self):
         move = self.move_stack.pop()
         
         if move.attacking:
-            self
+            self.piece_at(move.captured)
+        
+        if move.castling or move.castle_from in [A1, A8, H1, H8]:
+            self.castling_rights = self.prev_castling_rights.pop()
+        
+        self.turn = not self.turn
 
 class Move:
     def __init__(self, from_square: Square, to_square: Square, promotion=None, attacking=False, castling=False, castle_from: Square=None, castle_to: Square=None, captured=None):
@@ -306,10 +324,18 @@ class Move:
     def from_uci(uci: str, context: Board=None):
         try:
             if uci == 'O-O-O':
-                return Move(castling=True)
+                if context.turn == WHITE:
+                    return Move(E1, C1, castle_from=A1, castle_to=D1, castling=True)
+
+                if context.turn == BLACK:
+                    return Move(E8, C8, castle_from=A8, castle_to=D8, castling=True)
             
             elif uci == 'O-O':
-                return Move(castling=True)
+                if context.turn == WHITE:
+                    return Move(E1, G1, castle_from=H1, castle_to=F1, castling=True)
+
+                if context.turn == BLACK:
+                    return Move(E8, G8, castle_from=H8, castle_to=F8, castling=True)
 
             from_square = SQUARE_NAMES.index(uci[0:2])
             to_square = SQUARE_NAMES.index(uci[2:4])
@@ -488,7 +514,7 @@ class Piece:
             can_exit = True
             
             on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
-            on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY)) & (occupied_mask[self.side]|occupied_mask[not self.side])
+            on_occupied = lambda dx, dy: BB_SQUARES[self.square + dx*MX + dy*MY] & (occupied_mask[self.side]|occupied_mask[not self.side])
             no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
             
             for ix in [-1, 0, 1]:
@@ -504,7 +530,7 @@ class Piece:
                         dy += iy
 
                     # attacking
-                    if on_board(dy, dy) and not occupied_mask[self.side] & 2**(self.square + dy*MY):
+                    if on_board(dx, dy) and not occupied_mask[self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
                         moves.append(Move(self.square, self.square + dy*MY, attacking=True))
             
         if can_exit:
@@ -528,4 +554,12 @@ if in_fen == '':
 
 b = Board(in_fen)
 b.show_moves()
-# b.push(Move(from_square=E2, to_square=E4))
+b.push(Move(from_square=E2, to_square=E4))
+b.push(Move(from_square=E7, to_square=E5))
+b.push(Move(from_square=F1, to_square=E2))
+b.push(Move(from_square=D7, to_square=D6))
+b.push(Move(from_square=G1, to_square=F3))
+b.push(Move(from_square=F7, to_square=F6))
+b.show_moves()
+b.push(Move.from_uci("O-O", context=b))
+b.show_moves()
