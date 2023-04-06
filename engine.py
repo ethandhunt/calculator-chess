@@ -259,15 +259,16 @@ class Board:
         return ret
 
     def show_moves(self):
-        for p in b.pieces:
+        for p in self.pieces:
             print(p, end=' -> ')
             moves = p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights)
             print(', '.join(map(Move.uci, moves)))
     
     def moves(self):
         moves = []
-        for p in b.pieces:
+        for p in self.pieces:
             moves.append(p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights))
+        return moves
     
     def push(self, move):
         drint('Board.push(' + str(move) + ')')
@@ -547,19 +548,20 @@ class Piece:
     
 drint(__file__, 'tl done')
 
-in_fen = input('fen: ')
-if in_fen == '':
-    in_fen = STARTING_FEN
-    # in_fen = 'RNBQKBNR/8/8/8/8/8/8/rnbqkbnr w KQkq - 0 1'
+if __name__ == '__main__':
+    in_fen = input('fen: ')
+    if in_fen == '':
+        in_fen = STARTING_FEN
+        # in_fen = 'RNBQKBNR/8/8/8/8/8/8/rnbqkbnr w KQkq - 0 1'
 
-b = Board(in_fen)
-b.show_moves()
-b.push(Move(from_square=E2, to_square=E4))
-b.push(Move(from_square=E7, to_square=E5))
-b.push(Move(from_square=F1, to_square=E2))
-b.push(Move(from_square=D7, to_square=D6))
-b.push(Move(from_square=G1, to_square=F3))
-b.push(Move(from_square=F7, to_square=F6))
-b.show_moves()
-b.push(Move.from_uci("O-O", context=b))
-b.show_moves()
+    b = Board(in_fen)
+    b.show_moves()
+    b.push(Move(from_square=E2, to_square=E4))
+    b.push(Move(from_square=E7, to_square=E5))
+    b.push(Move(from_square=F1, to_square=E2))
+    b.push(Move(from_square=D7, to_square=D6))
+    b.push(Move(from_square=G1, to_square=F3))
+    b.push(Move(from_square=F7, to_square=F6))
+    b.show_moves()
+    b.push(Move.from_uci("O-O", context=b))
+    b.show_moves()
