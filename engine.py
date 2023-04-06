@@ -381,7 +381,7 @@ class Piece:
 
             # no wrap around, on board, not attacking own piece
             condition = lambda x, y: (self.square + x)//8 == self.square//8 and 0 <= MX*x + MY*y + self.square < 64 and not 2**(self.square+x*MX+y*MY) & occupied_mask[self.side]
-            attacking = lambda x, y: 2**(self.square + x*MX + y*MY) & occupied_mask[not self.side]
+            attacking = lambda x, y: bool(2**(self.square + x*MX + y*MY) & occupied_mask[not self.side])
             for i in [-1, 1]:
                 for j in [-2, 2]:
                     if condition(i, j):
