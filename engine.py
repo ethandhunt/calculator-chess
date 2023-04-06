@@ -173,7 +173,7 @@ BB_ALL = 0xffffffffffffffff
 
 BB_RANKS = [
     BB_RANK_1, BB_RANK_2, BB_RANK_3, BB_RANK_4, BB_RANK_5, BB_RANK_6, BB_RANK_7, BB_RANK_8
-] = [0xff for _ in range(8)] # [0xff, 0xff00, 0xff0000, ...]
+] = [0xff << 8*i for i in range(8)] # [0xff, 0xff00, 0xff0000, ...]
 
 BB_FILES = [
     BB_FILE_A, BB_FILE_B, BB_FILE_C, BB_FILE_D, BB_FILE_E, BB_FILE_F, BB_FILE_G, BB_FILE_H
@@ -189,6 +189,7 @@ class Board:
 
         fen_board, fen_turn, fen_castle, fen_en_passant, fen_half_move, fen_full_move = fen_string.split(' ')
         self.turn = fen_turn == 'w'
+        # {WHITE: [KING, QUEEN], BLACK: [KING, QUEEN]}
         self.castling_rights = {WHITE:[CHAR_TO_PIECE[x.upper()] for x in fen_castle if x.islower()], BLACK:[CHAR_TO_PIECE[x.upper()] for x in fen_castle if x.isupper()]}
         self.en_passant_square = SQUARE_NAMES.index(fen_en_passant) if fen_en_passant != '-' else None
         
@@ -302,7 +303,7 @@ class Move:
         # A1B1 (any piece that was on A1 moved to B1)
         # D7D8Q (piece at D7 goes to D8 and turns into a queeen)
     
-    def from_uci(uci: str):
+    def from_uci(uci: str, context: Board=None):
         try:
             if uci == 'O-O-O':
                 return Move(castling=True)
@@ -384,7 +385,7 @@ class Piece:
             for i in [-1, 1]:
                 for j in [-2, 2]:
                     if condition(i, j):
-                        moves.append(Move(self.square, self.square + MX*i + MY*j, attacking=attacking(i, j), captured=self.square + MX*I + MY*j))
+                        moves.append(Move(self.square, self.square + MX*i + MY*j, attacking=attacking(i, j), captured=self.square + MX*i + MY*j))
                     
                     if condition(j, i):
                         moves.append(Move(self.square, self.square + MX*j + MY*i, attacking=attacking(j, i), captured=self.square + MX*j + MY*i))
@@ -417,6 +418,7 @@ class Piece:
                         continue
 
 
+                    # attacking if square is opponent piece
                     moves.append(Move(self.square, self.square + x*MX + y*MY, attacking=attacking(x, y), captured=self.square + x*MX + y*MY))
             
             # castling
