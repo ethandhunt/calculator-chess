@@ -43,6 +43,9 @@ PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING = range(1, 7)
 PIECE_TO_CHAR = dict(zip(range(1, 7), 'PRNBQK'))
 CHAR_TO_PIECE = dict(zip('PRNBQK', range(1, 7)))
 
+mate_score = 1000000000
+mate_threshold = 999000000
+
 piece_value = {
     PAWN: 100,
     ROOK: 500,
@@ -265,14 +268,35 @@ class Board:
             moves = p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights)
             print(', '.join(map(Move.uci, moves)))
     
-    def moves(self):
+    def moves(self, invert=1):
         moves = []
         for p in self.pieces:
-            if p.side != self.turn or not p.active: continue
+            if p.side != self.turn*invert or not p.active: continue
             for m in p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights):
                 moves.append(m)
                 
         return moves
+    
+    def is_check(self):
+        # checks if the king of the current turn is attacked by another piece in the next turn if not blocked
+        for p in self.pieces:
+            if p.piece_type != KING or p.side != self.turn: continue
+            
+            for m in self.moves(invert=-1):
+                if m.captured == p.square:
+                    return True    
+        
+        return False
+    
+    def is_checkmate(self):
+        drint('Board.is_checkmate() called')
+        for m in self.moves():
+            self.push(m)
+            if self.is_check(): continue
+            self.pop()
+            return False
+
+        return True
     
     def push(self, move):
         drint('Board.push(' + str(move) + ')')
@@ -280,31 +304,63 @@ class Board:
         side = self.piece_at(move.from_square).side
 
         if move.attacking:
-            self.piece_at(move.captured).active = False
             self.inactive_pieces.append(self.piece_at(move.captured))
+            self.piece_at(move.captured).active = False
+            self.occupied_mask[not side] &= ~BB_SQUARES[move.captured]
         
+        # move the piece
         self.piece_at(move.from_square).square = move.to_square
         self.occupied_mask[side] &= ~BB_SQUARES[move.from_square]
         self.occupied_mask[side] |= BB_SQUARES[move.to_square]
+        # past this line, all references to the moved piece should use self.piece_at(move.to_square)
         
+        # castling move revokes castling rights
         if move.castling:
             self.piece_at(move.castle_from).square = move.castle_to
             self.prev_castling_rights.append(self.castling_rights)
             self.castling_rights[side] = []
+            self.occupied_mask[side] &= ~BB_SQUARES[move.castle_from]
+            self.occupied_mask[side] |= BB_SQUARES[move.castle_to]
+        
+        # king move revokes all castling rights
+        if self.piece_at(move.to_square).piece_type == KING:
+            self.prev_castling_rights.append(self.castling_rights)
+            self.castling_rights[side] = []
+        
+        # rook move revokes castling rights on its side
+        # any rook move updates castling rights
+        if self.piece_at(move.to_square).piece_type == ROOK:
+            castle = self.piece_at(move.to_square)
+            self.prev_castling_rights.append(self.castling_rights)
+            # messy logic, but will already have revoked castling rights on excess conditions
+            if castle.square % 8 == 0:
+                self.castling_rights[side] = [KING]*(KING in self.castling_rights)
+            
+            elif castle.square % 8 == 7:
+                self.castling_rights[side] = [QUEEN]*(QUEEN in self.castling_rights)
         
         self.turn = not self.turn
         
     
     def pop(self):
+        # this should be done in reverse, but I havent cleanly segmented the Board.push() function
+        drint('Board.pop()')
         move = self.move_stack.pop()
+
+        self.turn = not self.turn
+        
+        self.piece_at(move.to_square).square = move.from_square
+        self.occupied_mask[self.turn] &= ~BB_SQUARES[move.to_square]
+        self.occupied_mask[self.turn] |= BB_SQUARES[move.from_square]
         
         if move.attacking:
-            self.piece_at(move.captured)
+            captured_piece = self.inactive_pieces.pop()
+            captured_piece.active = True
+            self.occupied_mask[not self.turn] |= BB_SQUARES[captured_piece.square]
         
-        if move.castling or move.castle_from in [A1, A8, H1, H8]:
+        if move.castling or move.castle_from in [A1, A8, H1, H8] or self.piece_at(move.from_square).piece_type in [KING, ROOK]:
             self.castling_rights = self.prev_castling_rights.pop()
         
-        self.turn = not self.turn
 
 class Move:
     def __init__(self, from_square: Square, to_square: Square, promotion=None, attacking=False, castling=False, castle_from: Square=None, castle_to: Square=None, captured=None):
@@ -318,15 +374,28 @@ class Move:
         self.captured = captured
     
     def uci(self):
+        # [A-H][1-8](x)([A-H][1-8])[A-H][1-8](P)
         promotion = PIECE_TO_CHAR[self.promotion] if self.promotion else ''
         if self.castling:
             return '-'.join((['O']*abs(self.castle_from - self.castle_to)))
-        return SQUARE_NAMES[self.from_square].lower() + 'x' * self.attacking + SQUARE_NAMES[self.to_square].lower() + promotion
+        return (
+            SQUARE_NAMES[self.from_square] +
+            ('x' * self.attacking) +
+            (SQUARE_NAMES[self.captured] * (self.captured != self.to_square) if self.attacking else '') +
+            SQUARE_NAMES[self.to_square] + promotion
+        )
         # examples:
         # A1B1 (any piece that was on A1 moved to B1)
         # D7D8Q (piece at D7 goes to D8 and turns into a queeen)
+        # B1xC3 (the knight at B1 takes on C3)
+        # B5xC5C6 (the pawn on B5 takes the pawn on C5 en passant and ends up on C6)
     
     def from_uci(uci: str, context: Board=None):
+        # case insensitive
+        # A1A2 - from a1 to a2
+        # A1xA2 - from a1 to a2, capturing on a2
+        # A5xB5B6 - from a5 to b6, capturing on b5 (en passant)
+        # A7A8Q - from a7 to a8, promoting to queen
         try:
             if uci == 'O-O-O':
                 if context.turn == WHITE:
@@ -344,13 +413,14 @@ class Move:
 
             attacking = 'x' in uci
             uci = uci.replace('x', '')
-            from_square = SQUARE_NAMES.index(uci[0:2])
-            to_square = SQUARE_NAMES.index(uci[2:4])
-            promotion = CHAR_TO_PIECE[uci[4]] if len(uci) == 5 else None
+            from_square = SQUARE_NAMES.index(uci[0:2].upper())
+            to_square = SQUARE_NAMES.index(uci[2:4].upper())
+            promotion = CHAR_TO_PIECE[uci[4].upper()] if len(uci) == 5 else None
             
             captured = None
             if attacking:
                 captured = to_square
+                # cannot promote during en passant (this is probably stupid, implied limitations are bad practice)
                 if len(uci) == len('a5xb5b6')-1: # 'x' is removed
                     to_square = SQUARE_NAMES.index(uci[4:6])
                 
@@ -384,6 +454,7 @@ class Piece:
         Generates move mask
         Ignores discovered check
         Continuous moves are constrained by the presence of pieces in the way
+        Allows for castling through and into check
         '''
         moves = []
         MY = 8 # Move Y axis
@@ -399,22 +470,24 @@ class Piece:
             # on bitboard, [x+8] is y+1
             starting_rank = RANK_2 if self.side == WHITE else RANK_7
             
-            tup = (self.square + 2*MY) if self.side == WHITE else (self.square - 2*MY)
-            if self.square in starting_rank and not on_occupied(tup):
-                moves.append(Move(self.square, tup))
             
             up = (self.square + MY) if self.side == WHITE else (self.square - MY)
             if 0 <= up < 64 and not on_occupied(up):
                 moves.append(Move(self.square, up))
+
+                # double forward
+                tup = (self.square + 2*MY) if self.side == WHITE else (self.square - 2*MY)
+                if self.square in starting_rank and not on_occupied(tup):
+                    moves.append(Move(self.square, tup))
             
             left = up - MX
             right = up + MX
 
-            if same_rank(up, left) and occupied_mask[not self.side] & 2**left:
+            if same_rank(up, left) and occupied_mask[not self.side] & BB_SQUARES[left]:
                 moves.append(Move(self.square, left, attacking=True, captured=left))
             
-            if same_rank(up, right) and occupied_mask[not self.side] & 2**right:
-                moves.append(Move(self.square, right, attacking=True, captured=left))
+            if same_rank(up, right) and occupied_mask[not self.side] & BB_SQUARES[right]:
+                moves.append(Move(self.square, right, attacking=True, captured=right))
         
         elif self.piece_type == KNIGHT:
             can_exit = True
@@ -425,16 +498,16 @@ class Piece:
             for i in [-1, 1]:
                 for j in [-2, 2]:
                     if condition(i, j):
-                        moves.append(Move(self.square, self.square + MX*i + MY*j, attacking=attacking(i, j), captured=self.square + MX*i + MY*j))
+                        moves.append(Move(self.square, self.square + MX*i + MY*j, attacking=attacking(i, j), captured=self.square + MX*i + MY*j if attacking(i, j) else None))
                     
                     if condition(j, i):
-                        moves.append(Move(self.square, self.square + MX*j + MY*i, attacking=attacking(j, i), captured=self.square + MX*j + MY*i))
+                        moves.append(Move(self.square, self.square + MX*j + MY*i, attacking=attacking(j, i), captured=self.square + MX*j + MY*i if attacking(j, i) else None))
                     
             
         elif self.piece_type == KING:
             can_exit = True
             
-            attacking = lambda x, y: 2**(self.square + x*MX + y*MY) & occupied_mask[not self.side]
+            attacking = lambda x, y: bool(BB_SQUARES[self.square + x*MX + y*MY] & occupied_mask[not self.side])
             # wrap around, on board, king can't move by not moving
             # condition = lambda x, y: ((self.square + x)//8 == self.square//8) and (0 <= MX*x + MY*y + self.square < 64) and (x*y != 0)
             for x in [-1, 0, 1]:
@@ -459,7 +532,7 @@ class Piece:
 
 
                     # attacking if square is opponent piece
-                    moves.append(Move(self.square, self.square + x*MX + y*MY, attacking=attacking(x, y), captured=self.square + x*MX + y*MY))
+                    moves.append(Move(self.square, self.square + x*MX + y*MY, attacking=attacking(x, y), captured=self.square + x*MX + y*MY if attacking(x, y) else None))
             
             # castling
             # moving through check must be caught externally
@@ -491,8 +564,8 @@ class Piece:
                     dx += ix
                     
                 # attacking
-                if on_board(dx, 0) and not occupied_mask[self.side] & 2**(self.square + dx*MX):
-                    moves.append(Move(self.square, self.square + dx*MX, attacking=True))
+                if on_same_rank(dx) and on_board(dx, 0) and not occupied_mask[self.side] & 2**(self.square + dx*MX):
+                    moves.append(Move(self.square, self.square + dx*MX, attacking=True, captured=self.square + dx*MX))
             
             for iy in [-1, 1]:
                 dy = iy
@@ -502,7 +575,7 @@ class Piece:
                 
                 # attacking
                 if on_board(0, dy) and not occupied_mask[self.side] & 2**(self.square + dy*MY):
-                    moves.append(Move(self.square, self.square + dy*MY, attacking=True))
+                    moves.append(Move(self.square, self.square + dy*MY, attacking=True, captured=self.square+ dy*MY))
         
         elif self.piece_type == BISHOP:
             can_exit = True
@@ -522,7 +595,7 @@ class Piece:
 
                     # attacking
                     if no_wrap_around(dx) and on_board(dx, dy) and not occupied_mask[self.side] & 2**(self.square + dx*MX + dy*MY):
-                        moves.append(Move(self.square, self.square + dy*MY, attacking=True))
+                        moves.append(Move(self.square, self.square + dx*MX + dy*MY, attacking=True, captured=self.square + dx*MX + dy*MY))
             
         elif self.piece_type == QUEEN:
             can_exit = True
@@ -544,8 +617,8 @@ class Piece:
                         dy += iy
 
                     # attacking
-                    if on_board(dx, dy) and not occupied_mask[self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
-                        moves.append(Move(self.square, self.square + dy*MY, attacking=True))
+                    if on_board(dx, dy) and occupied_mask[not self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
+                        moves.append(Move(self.square, self.square + dx*MX + dy*MY, attacking=True, captured=self.square + dx*MX + dy*MY))
             
         if can_exit:
             return moves
@@ -568,15 +641,18 @@ if __name__ == '__main__':
         # in_fen = 'RNBQKBNR/8/8/8/8/8/8/rnbqkbnr w KQkq - 0 1'
 
     b = Board(in_fen)
-    b.push(Move.from_uci("C2C4"))
+    b.push(Move.from_uci("B1C3"))
+    b.push(Move.from_uci("F7F6"))
+    b.push(Move.from_uci("A2A3"))
     b.push(Move.from_uci("C7C6"))
-    b.push(Move.from_uci("C4C5"))
-    b.push(Move.from_uci("D8A5"))
-    b.push(Move.from_uci("G2G3"))
-    b.push(Move.from_uci("A5C3"))
-    b.push(Move.from_uci("F2F4"))
-    b.push(Move.from_uci("A7A5"))
+    b.push(Move.from_uci("H2H4"))
+    b.push(Move.from_uci("G7G6"))
+    b.push(Move.from_uci("F2F3"))
+    b.push(Move.from_uci("H7H5"))
     b.push(Move.from_uci("E2E3"))
-    b.push(Move.from_uci("B8A6"))
-    b.push(Move.from_uci("D2xC3"))
+    b.push(Move.from_uci("A7A5"))
     b.moves()
+    # incorrect moves:
+    # R@H1 -> h1xa2
+    # P@C2 -> c2c4 (should be blocked by N@C3)
+    
