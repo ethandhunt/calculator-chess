@@ -661,8 +661,3 @@ class Piece:
 drint(__file__, 'tl done')
 
 # calculator can store ≈235 moves in memory
-b = Board()
-b.push(Move.from_uci('H2H3'))
-b.push(Move.from_uci('C7C6'))
-b.push(Move.from_uci('G1F3'))
-print(list(b.legal_moves()))
