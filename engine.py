@@ -277,8 +277,26 @@ class Board:
         for p in self.pieces:
             if p.side != self.turn*invert or not p.active: continue
             for m in p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights):
-                if self.piece_at(m.from_square) is None: raise Exception('move refers to None piece') # idk why the fuck this happens, but it does. I will not be fixing it
                 yield m
+    
+    def legal_moves(self):
+        '''
+        remove all moves that leave the current player in check
+        '''
+        if not self.is_check():
+            for m in self.moves():
+                yield m
+            return
+        
+        for m in self.moves():
+            self.push(m)
+            if self.is_check(-1):
+                self.pop()
+                continue
+
+            yield m
+            self.pop()
+            
     
     def is_check(self, invert=1):
         # checks if the king of the current turn is attacked by another piece in the next turn if not blocked
@@ -287,15 +305,18 @@ class Board:
             
             for m in self.moves(invert=-1):
                 if m.captured == p.square:
-                    return True    
+                    return True
+            
+            return False # we have seen the king, it isn't in check
         
         return False
     
     def is_checkmate(self):
         drint('Board.is_checkmate() called')
+        if not self.is_check(): return False
         for m in self.moves():
             self.push(m)
-            if self.is_check():
+            if self.is_check(-1):
                 self.pop()
                 continue
 
@@ -623,14 +644,13 @@ class Piece:
                         dy += iy
 
                     # attacking
-                    if on_board(dx, dy) and occupied_mask[not self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
+                    if no_wrap_around(dx) and on_board(dx, dy) and occupied_mask[not self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
                         yield Move(self.square, self.square + dx*MX + dy*MY, attacking=True, captured=self.square + dx*MX + dy*MY)
             
         if can_exit:
             return moves
         
-        drint('piece type fell through in Piece.passive_move_mask(occupied_mask)')
-        input('read error pls')
+        raise Exception('piece type fell through in Piece.passive_move_mask(occupied_mask)')
         return 0
 
     def attack_move_mask(self, occupied_mask, en_passant_square):
@@ -640,25 +660,9 @@ class Piece:
     
 drint(__file__, 'tl done')
 
-if __name__ == '__main__':
-    in_fen = input('fen: ')
-    if in_fen == '':
-        in_fen = STARTING_FEN
-        # in_fen = 'RNBQKBNR/8/8/8/8/8/8/rnbqkbnr w KQkq - 0 1'
-
-    b = Board(in_fen)
-    b.push(Move.from_uci("B1C3"))
-    b.push(Move.from_uci("F7F6"))
-    b.push(Move.from_uci("A2A3"))
-    b.push(Move.from_uci("C7C6"))
-    b.push(Move.from_uci("H2H4"))
-    b.push(Move.from_uci("G7G6"))
-    b.push(Move.from_uci("F2F3"))
-    b.push(Move.from_uci("H7H5"))
-    b.push(Move.from_uci("E2E3"))
-    b.push(Move.from_uci("A7A5"))
-    b.show_moves()
-    # incorrect moves:
-    # R@H1 -> h1xa2
-    # P@C2 -> c2c4 (should be blocked by N@C3)
-    
+# calculator can store ≈235 moves in memory
+b = Board()
+b.push(Move.from_uci('H2H3'))
+b.push(Move.from_uci('C7C6'))
+b.push(Move.from_uci('G1F3'))
+print(list(b.legal_moves()))
