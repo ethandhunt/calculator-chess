@@ -483,15 +483,7 @@ class Piece:
         Continuous moves are constrained by the presence of pieces in the way
         Allows for castling through and into check
         '''
-        moves = []
-        MY = 8 # Move Y axis
-        MX = 1 # Move X axis
-        
-        can_exit = False
-        # Noncontinuous pass
-        if self.piece_type == PAWN:
-            can_exit = True
-            
+        def pawn_moves():
             same_rank = lambda a, b: a//8 == b//8
             on_occupied = lambda x: (occupied_mask[self.side]|occupied_mask[not self.side]) & 2**x
             # on bitboard, [x+8] is y+1
@@ -516,9 +508,7 @@ class Piece:
             if same_rank(up, right) and occupied_mask[not self.side] & BB_SQUARES[right]:
                 yield Move(self.square, right, attacking=True, captured=right)
         
-        elif self.piece_type == KNIGHT:
-            can_exit = True
-
+        def knight_moves():
             # no wrap around, on board, not attacking own piece
             condition = lambda x, y: (self.square + x)//8 == self.square//8 and 0 <= MX*x + MY*y + self.square < 64 and not 2**(self.square+x*MX+y*MY) & occupied_mask[self.side]
             attacking = lambda x, y: bool(2**(self.square + x*MX + y*MY) & occupied_mask[not self.side])
@@ -529,11 +519,8 @@ class Piece:
                     
                     if condition(j, i):
                         yield Move(self.square, self.square + MX*j + MY*i, attacking=attacking(j, i), captured=self.square + MX*j + MY*i if attacking(j, i) else None)
-                    
-            
-        elif self.piece_type == KING:
-            can_exit = True
-            
+        
+        def king_moves():
             attacking = lambda x, y: bool(BB_SQUARES[self.square + x*MX + y*MY] & occupied_mask[not self.side])
             # wrap around, on board, king can't move by not moving
             # condition = lambda x, y: ((self.square + x)//8 == self.square//8) and (0 <= MX*x + MY*y + self.square < 64) and (x*y != 0)
@@ -573,13 +560,8 @@ class Piece:
             if QUEEN in castling_rights[self.side]:
                 if not (BB_FILE_C | BB_FILE_D) & rank & (occupied_mask[self.side] | occupied_mask[not self.side]):
                     yield Move(self.square, self.square - 2, castling=True, castle_from=self.square - 4, castle_to=self.square - 1)
-            
         
-        # Continuous move pass
-        elif self.piece_type == ROOK:
-            can_exit = True
-            
-            move_squares = []
+        def rook_moves():
             on_same_rank = lambda dx: (self.square + dx*MX)//8 == self.square//8
             on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
             on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
@@ -604,9 +586,7 @@ class Piece:
                 if on_board(0, dy) and not occupied_mask[self.side] & 2**(self.square + dy*MY):
                     yield Move(self.square, self.square + dy*MY, attacking=True, captured=self.square+ dy*MY)
         
-        elif self.piece_type == BISHOP:
-            can_exit = True
-
+        def bishop_moves():
             on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
             on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
             no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
@@ -623,10 +603,8 @@ class Piece:
                     # attacking
                     if no_wrap_around(dx) and on_board(dx, dy) and not occupied_mask[self.side] & 2**(self.square + dx*MX + dy*MY):
                         yield Move(self.square, self.square + dx*MX + dy*MY, attacking=True, captured=self.square + dx*MX + dy*MY)
-            
-        elif self.piece_type == QUEEN:
-            can_exit = True
-            
+        
+        def queen_moves():
             on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
             on_occupied = lambda dx, dy: BB_SQUARES[self.square + dx*MX + dy*MY] & (occupied_mask[self.side]|occupied_mask[not self.side])
             no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
@@ -646,12 +624,24 @@ class Piece:
                     # attacking
                     if no_wrap_around(dx) and on_board(dx, dy) and occupied_mask[not self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
                         yield Move(self.square, self.square + dx*MX + dy*MY, attacking=True, captured=self.square + dx*MX + dy*MY)
-            
-        if can_exit:
-            return moves
         
-        raise Exception('piece type fell through in Piece.passive_move_mask(occupied_mask)')
-        return 0
+        MY = 8 # Move Y axis
+        MX = 1 # Move X axis
+        
+        if self.piece_type == PAWN: return pawn_moves()
+        
+        elif self.piece_type == KNIGHT: return knight_moves()
+            
+        elif self.piece_type == KING: return king_moves()
+        
+        elif self.piece_type == ROOK: return rook_moves()
+        
+        elif self.piece_type == BISHOP: return bishop_moves()
+            
+        elif self.piece_type == QUEEN: return queen_moves()
+            
+        else:
+            raise Exception('piece type fell through in Piece.passive_move_mask(occupied_mask)')
 
     def attack_move_mask(self, occupied_mask, en_passant_square):
         pass
