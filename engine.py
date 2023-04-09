@@ -21,8 +21,7 @@ other stuff:
 '''
 
 ''' stuff to do
-find cause of self.piece_at(move.from_square) -> None
-(or hack it away)
+search 'fuckwhyisitbroken' for information on breaking things
 '''
 
 debug = False
@@ -274,10 +273,12 @@ class Board:
             print(', '.join(map(Move.uci, moves)))
     
     def moves(self, invert=1):
+        ebug = []
         for p in self.pieces:
             if p.side != self.turn*invert or not p.active: continue
             for m in p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights):
                 yield m
+                ebug.append(m)
     
     def legal_moves(self):
         '''
@@ -476,6 +477,164 @@ class Piece:
         ret = ret.upper() if self.side == WHITE else ret.lower()
         return ret + '@' + SQUARE_NAMES[self.square]
 
+    def pawn_moves(self, occupied_mask, en_passant_square):
+        # same_rank = lambda a, b: a//8 == b//8
+        # on_occupied = lambda x: (occupied_mask[self.side]|occupied_mask[not self.side]) & 2**x
+        # on bitboard, [x+8] is y+1
+        starting_rank = RANK_2 if self.side == WHITE else RANK_7
+        
+        
+        up = (self.square + 8) if self.side == WHITE else (self.square - 8)
+        # if 0 <= up < 64 and not on_occupied(up):
+        if 0 <= up < 64 and not 2**up & (occupied_mask[self.side]|occupied_mask[not self.side]):
+            yield Move(self.square, up)
+
+            # double forward
+            tup = (self.square + 2*8) if self.side == WHITE else (self.square - 2*8)
+            # if self.square in starting_rank and not on_occupied(tup):
+            if self.square in starting_rank and not 2**tup & (occupied_mask[self.side]|occupied_mask[not self.side]):
+                yield Move(self.square, tup)
+        
+        left = up - 1
+        right = up + 1
+
+        # if same_rank(up, left) and occupied_mask[not self.side] & BB_SQUARES[left]:
+        if up//8 == left//8 and 2**left & occupied_mask[not self.side]:
+            yield Move(self.square, left, attacking=True, captured=left)
+        
+        # if same_rank(up, right) and occupied_mask[not self.side] & BB_SQUARES[right]:
+        if up//8 == right//8 and 2**right & occupied_mask[not self.side]:
+            yield Move(self.square, right, attacking=True, captured=right)
+    
+    def knight_moves(self, occupied_mask):
+        # no wrap around, on board, not attacking own piece
+        # condition = lambda x, y: (self.square + x)//8 == self.square//8 and 0 <= MX*x + MY*y + self.square < 64 and not 2**(self.square+x*MX+y*MY) & occupied_mask[self.side]
+        # attacking = lambda x, y: bool(2**(self.square + x*MX + y*MY) & occupied_mask[not self.side])
+        
+        # fuckwhyisitbroken: rook seems to be attempting to take where the knight was?
+        # but a misconfigured to/from square shouldn't do that?
+        # unless Move(attacking=) is set incorrectly and board.pop() is setting the occupied_mask bit?
+        for i in [-1, 1]:
+            for j in [-2, 2]:
+                if (self.square + i)//8 == self.square//8 and 0 <= i + 8*j + self.square < 64 and not 2**(self.square+i+j*8) & occupied_mask[self.side]:
+                    yield Move(self.square, self.square + i + 8*j, attacking=bool(2**(self.square + i + j*8) & occupied_mask[not self.side]), captured=self.square + i + 8*j)
+                
+                if (self.square + j)//8 == self.square//8 and 0 <= j + 8*i + self.square < 64 and not 2**(self.square+j+i*8) & occupied_mask[self.side]:
+                    yield Move(self.square, self.square + j + 8*i, attacking=bool(2**(self.square + j + i*8) & occupied_mask[not self.side]), captured=self.square + j + 8*i)
+    
+    def king_moves(self, occupied_mask, castling_rights):
+        attacking = lambda x, y: bool(2**(self.square + x + y*8) & occupied_mask[not self.side])
+        # wrap around, on board, king can't move by not moving
+        # condition = lambda x, y: ((self.square + x)//8 == self.square//8) and (0 <= MX*x + MY*y + self.square < 64) and (x*y != 0)
+        for x in [-1, 0, 1]:
+            for y in [-1, 0, 1]:
+                #if condition(x, y):
+                
+                # king can't move by not moving
+                if x == y == 0:
+                    continue
+                
+                # chess isn't open world yet
+                if not 0 <= (self.square + x + 8*y) < 64:
+                    continue
+                
+                # prevent wrap around
+                if (self.square + x)//8 != self.square//8:
+                    continue
+                
+                # king can't take own piece
+                if occupied_mask[self.side] & 2**(self.square + x + y*8):
+                    continue
+
+
+                # attacking if square is opponent piece
+                yield Move(self.square, self.square + x + y*8, attacking=attacking(x, y), captured=self.square + x + y*8)
+        
+        # castling
+        # moving through check must be caught externally
+        # assumes that the rook and king are in the correct spots and castling rights are accurate
+        rank = BB_RANK_1 if self.side == WHITE else BB_RANK_8
+        if KING in castling_rights[self.side]:
+            # check if any piece is preventing the castle by existing in between the castle and the king
+            if not (BB_FILE_F | BB_FILE_G) & rank & (occupied_mask[self.side] | occupied_mask[not self.side]):
+                yield Move(self.square, self.square + 2, castling=True, castle_from=self.square + 3, castle_to=self.square + 1)
+        
+        if QUEEN in castling_rights[self.side]:
+            if not (BB_FILE_C | BB_FILE_D) & rank & (occupied_mask[self.side] | occupied_mask[not self.side]):
+                yield Move(self.square, self.square - 2, castling=True, castle_from=self.square - 4, castle_to=self.square - 1)
+    
+    def rook_moves(self, occupied_mask):
+        # on_same_rank = lambda dx: (self.square + dx*MX)//8 == self.square//8
+        # on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
+        # on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
+
+        for ix in [-1, 1]:
+            dx = ix
+            # while on_same_rank(dx) and on_board(dx, 0) and not on_occupied(dx, 0):
+            while (self.square + dx)//8 == self.square//8 and 0 <= self.square + dx < 64 and not 2**(self.square + dx) & (occupied_mask[self.side]| occupied_mask[not self.side]):
+                yield Move(self.square, self.square + dx, attacking=True, captured=self.square + dx)
+                dx += ix
+                
+            # attacking
+            # if on_same_rank(dx) and on_board(dx, 0) and not occupied_mask[self.side] & 2**(self.square + dx*MX):
+            if (self.square + dx)//8 == self.square//8 and 0 <= self.square + dx < 64 and occupied_mask[not self.side] & 2**(self.square + dx):
+                yield Move(self.square, self.square + dx, attacking=True, captured=self.square + dx)
+        
+        for iy in [-1, 1]:
+            dy = iy
+            # while on_board(0, dy) and not on_occupied(0, dy):
+            while 0 <= self.square + dy*8 < 64 and not 2**(self.square + dy*8) & (occupied_mask[self.side]| occupied_mask[not self.side]):
+                yield Move(self.square, self.square + dy*8)
+                dy += iy
+            
+            # attacking
+            # if on_board(0, dy) and not occupied_mask[self.side] & 2**(self.square + dy*MY):
+            while 0 <= self.square + dy*8 < 64 and occupied_mask[not self.side] & 2**(self.square + dy*8):
+                yield Move(self.square, self.square + dy*8, attacking=True, captured=self.square+ dy*8)
+    
+    def bishop_moves(self, occupied_mask):
+        # on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
+        # on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
+        # no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
+        
+        for ix in [-1, 1]:
+            for iy in [-1, 1]:
+                dx = ix
+                dy = iy
+                # while no_wrap_around(dx) and on_board(dx, dy) and not on_occupied(dx, dy):
+                while (self.square + dx)//8 == self.square//8 and 0 <= self.square + dx + dy*8 < 64 and not 2**(self.square + dx + dy*8) & (occupied_mask[self.side]|occupied_mask[not self.side]):
+                    yield Move(self.square, self.square + dx + dy*8)
+                    dx += ix
+                    dy += iy
+                
+                # attacking
+                # if no_wrap_around(dx) and on_board(dx, dy) and not occupied_mask[self.side] & 2**(self.square + dx*MX + dy*MY):
+                if (self.square + dx)//8 == self.square//8 and 0 <= self.square + dx + dy*8 < 64 and not 2**(self.square + dx + dy*8) & (occupied_mask[self.side]|occupied_mask[not self.side]):
+                    yield Move(self.square, self.square + dx + dy*8, attacking=True, captured=self.square + dx + dy*8)
+    
+    def queen_moves(self, occupied_mask):
+        # on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
+        # on_occupied = lambda dx, dy: 2**(self.square + dx*MX + dy*MY) & (occupied_mask[self.side]|occupied_mask[not self.side])
+        # no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
+        
+        for ix in [-1, 0, 1]:
+            for iy in [-1, 0, 1]:
+                if ix == iy == 0:
+                    continue
+                
+                dx = ix
+                dy = iy
+                # while no_wrap_around(dx) and on_board(dx, dy) and not on_occupied(dx, dy):
+                while 0 <= (self.square//8 + dx) < 8 and 0 <= (self.square + dx + dy*8) < 64 and not 2**(self.square + dx + dy*8) & (occupied_mask[self.side]|occupied_mask[not self.side]):
+                    yield Move(self.square, self.square + dx + dy*8)
+                    dx += ix
+                    dy += iy
+
+                # attacking
+                # if no_wrap_around(dx) and on_board(dx, dy) and occupied_mask[not self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
+                if 0 <= (self.square//8 + dx) < 8 and 0 <= (self.square + dx + dy*8) < 64 and 2**(self.square + dx + dy*8) & occupied_mask[not self.side]:
+                    yield Move(self.square, self.square + dx + dy*8, attacking=True, captured=self.square + dx + dy*8)
+
     def moves(self, occupied_mask, en_passant_square, castling_rights):
         '''
         Generates move mask
@@ -483,162 +642,21 @@ class Piece:
         Continuous moves are constrained by the presence of pieces in the way
         Allows for castling through and into check
         '''
-        def pawn_moves():
-            same_rank = lambda a, b: a//8 == b//8
-            on_occupied = lambda x: (occupied_mask[self.side]|occupied_mask[not self.side]) & 2**x
-            # on bitboard, [x+8] is y+1
-            starting_rank = RANK_2 if self.side == WHITE else RANK_7
-            
-            
-            up = (self.square + MY) if self.side == WHITE else (self.square - MY)
-            if 0 <= up < 64 and not on_occupied(up):
-                yield Move(self.square, up)
-
-                # double forward
-                tup = (self.square + 2*MY) if self.side == WHITE else (self.square - 2*MY)
-                if self.square in starting_rank and not on_occupied(tup):
-                    yield Move(self.square, tup)
-            
-            left = up - MX
-            right = up + MX
-
-            if same_rank(up, left) and occupied_mask[not self.side] & BB_SQUARES[left]:
-                yield Move(self.square, left, attacking=True, captured=left)
-            
-            if same_rank(up, right) and occupied_mask[not self.side] & BB_SQUARES[right]:
-                yield Move(self.square, right, attacking=True, captured=right)
         
-        def knight_moves():
-            # no wrap around, on board, not attacking own piece
-            condition = lambda x, y: (self.square + x)//8 == self.square//8 and 0 <= MX*x + MY*y + self.square < 64 and not 2**(self.square+x*MX+y*MY) & occupied_mask[self.side]
-            attacking = lambda x, y: bool(2**(self.square + x*MX + y*MY) & occupied_mask[not self.side])
-            for i in [-1, 1]:
-                for j in [-2, 2]:
-                    if condition(i, j):
-                        yield Move(self.square, self.square + MX*i + MY*j, attacking=attacking(i, j), captured=self.square + MX*i + MY*j if attacking(i, j) else None)
-                    
-                    if condition(j, i):
-                        yield Move(self.square, self.square + MX*j + MY*i, attacking=attacking(j, i), captured=self.square + MX*j + MY*i if attacking(j, i) else None)
+        # MY = 8 # Move Y axis
+        # MX = 1 # Move X axis
         
-        def king_moves():
-            attacking = lambda x, y: bool(BB_SQUARES[self.square + x*MX + y*MY] & occupied_mask[not self.side])
-            # wrap around, on board, king can't move by not moving
-            # condition = lambda x, y: ((self.square + x)//8 == self.square//8) and (0 <= MX*x + MY*y + self.square < 64) and (x*y != 0)
-            for x in [-1, 0, 1]:
-                for y in [-1, 0, 1]:
-                    #if condition(x, y):
-                    
-                    # prevent wrap around
-                    if (self.square + x)//8 != self.square//8:
-                        continue
-                    
-                    # chess isn't open world yet
-                    if not 0 <= (self.square + MX*x + MY*y) < 64:
-                        continue
-                    
-                    # king can't move by not moving
-                    if x == y == 0:
-                        continue
-                    
-                    # king can't take own piece
-                    if occupied_mask[self.side] & 2**(self.square + x*MX + y*MY):
-                        continue
-
-
-                    # attacking if square is opponent piece
-                    yield Move(self.square, self.square + x*MX + y*MY, attacking=attacking(x, y), captured=self.square + x*MX + y*MY if attacking(x, y) else None)
+        if self.piece_type == PAWN: return self.pawn_moves(occupied_mask, en_passant_square)
+        
+        elif self.piece_type == KNIGHT: return self.knight_moves(occupied_mask)
             
-            # castling
-            # moving through check must be caught externally
-            # assumes that the rook and king are in the correct spots and castling rights are accurate
-            rank = BB_RANK_1 if self.side == WHITE else BB_RANK_8
-            if KING in castling_rights[self.side]:
-                # check if any piece is preventing the castle by existing in between the castle and the king
-                if not (BB_FILE_F | BB_FILE_G) & rank & (occupied_mask[self.side] | occupied_mask[not self.side]):
-                    yield Move(self.square, self.square + 2, castling=True, castle_from=self.square + 3, castle_to=self.square + 1)
+        elif self.piece_type == KING: return self.king_moves(occupied_mask, castling_rights)
+        
+        elif self.piece_type == ROOK: return self.rook_moves(occupied_mask)
+        
+        elif self.piece_type == BISHOP: return self.bishop_moves(occupied_mask)
             
-            if QUEEN in castling_rights[self.side]:
-                if not (BB_FILE_C | BB_FILE_D) & rank & (occupied_mask[self.side] | occupied_mask[not self.side]):
-                    yield Move(self.square, self.square - 2, castling=True, castle_from=self.square - 4, castle_to=self.square - 1)
-        
-        def rook_moves():
-            on_same_rank = lambda dx: (self.square + dx*MX)//8 == self.square//8
-            on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
-            on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
-
-            for ix in [-1, 1]:
-                dx = ix
-                while on_same_rank(dx) and on_board(dx, 0) and not on_occupied(dx, 0):
-                    yield Move(self.square, self.square + dx*MX)
-                    dx += ix
-                    
-                # attacking
-                if on_same_rank(dx) and on_board(dx, 0) and not occupied_mask[self.side] & 2**(self.square + dx*MX):
-                    yield Move(self.square, self.square + dx*MX, attacking=True, captured=self.square + dx*MX)
-            
-            for iy in [-1, 1]:
-                dy = iy
-                while on_board(0, dy) and not on_occupied(0, dy):
-                    yield Move(self.square, self.square + dy*MY)
-                    dy += iy
-                
-                # attacking
-                if on_board(0, dy) and not occupied_mask[self.side] & 2**(self.square + dy*MY):
-                    yield Move(self.square, self.square + dy*MY, attacking=True, captured=self.square+ dy*MY)
-        
-        def bishop_moves():
-            on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
-            on_occupied = lambda dx, dy: (2**(self.square + dx*MX + dy*MY) & occupied_mask[self.side]) or (2**(self.square + dx*MX + dy*MY) & occupied_mask[not self.side])
-            no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
-            
-            for ix in [-1, 1]:
-                for iy in [-1, 1]:
-                    dx = ix
-                    dy = iy
-                    while no_wrap_around(dx) and on_board(dx, dy) and not on_occupied(dx, dy):
-                        yield Move(self.square, self.square + dx*MX + dy*MY)
-                        dx += ix
-                        dy += iy
-
-                    # attacking
-                    if no_wrap_around(dx) and on_board(dx, dy) and not occupied_mask[self.side] & 2**(self.square + dx*MX + dy*MY):
-                        yield Move(self.square, self.square + dx*MX + dy*MY, attacking=True, captured=self.square + dx*MX + dy*MY)
-        
-        def queen_moves():
-            on_board = lambda dx, dy: 0 <= self.square + dx*MX + dy*MY < 64
-            on_occupied = lambda dx, dy: BB_SQUARES[self.square + dx*MX + dy*MY] & (occupied_mask[self.side]|occupied_mask[not self.side])
-            no_wrap_around = lambda dx: (self.square + dx*MX)//8 == self.square//8
-            
-            for ix in [-1, 0, 1]:
-                for iy in [-1, 0, 1]:
-                    if ix == iy == 0:
-                        continue
-                    
-                    dx = ix
-                    dy = iy
-                    while no_wrap_around(dx) and on_board(dx, dy) and not on_occupied(dx, dy):
-                        yield Move(self.square, self.square + dx*MX + dy*MY)
-                        dx += ix
-                        dy += iy
-
-                    # attacking
-                    if no_wrap_around(dx) and on_board(dx, dy) and occupied_mask[not self.side] & BB_SQUARES[self.square + dx*MX + dy*MY]:
-                        yield Move(self.square, self.square + dx*MX + dy*MY, attacking=True, captured=self.square + dx*MX + dy*MY)
-        
-        MY = 8 # Move Y axis
-        MX = 1 # Move X axis
-        
-        if self.piece_type == PAWN: return pawn_moves()
-        
-        elif self.piece_type == KNIGHT: return knight_moves()
-            
-        elif self.piece_type == KING: return king_moves()
-        
-        elif self.piece_type == ROOK: return rook_moves()
-        
-        elif self.piece_type == BISHOP: return bishop_moves()
-            
-        elif self.piece_type == QUEEN: return queen_moves()
+        elif self.piece_type == QUEEN: return self.queen_moves(occupied_mask)
             
         else:
             raise Exception('piece type fell through in Piece.passive_move_mask(occupied_mask)')
