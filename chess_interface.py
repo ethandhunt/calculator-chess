@@ -4,6 +4,8 @@ import random
 
 CHECK_VALUE = 400 # better than taking a bishop (hopefully finds a check with a bishop capture later)
 
+RANDOMNESS = 10
+
 def move_value(board, move):
     if move.promotion is not None:
         return float("-inf") if board.turn != playing_for else float("inf")
@@ -21,7 +23,7 @@ def move_value(board, move):
     check = board.is_check()
     board.pop()
     
-    move_value = attack_value + position_change + check*CHECK_VALUE
+    move_value = attack_value + position_change + check*CHECK_VALUE + random.randint(0, RANDOMNESS)
     if board.turn != engine.WHITE:
         move_value *= -1 # invert weight if the move is good for black
     
