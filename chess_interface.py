@@ -138,10 +138,11 @@ def minimax(depth, board, alpha=float('-inf'), beta=float('inf'), maximising=eng
 def rank_moves(depth, board, maximising=engine.WHITE):
     valued_moves = []
     for m in board.legal_moves():
+        print(m)
         board.push(m)
         valued_moves.append((m, minimax(depth, board, maximising=maximising)))
         board.pop()
-        print(*valued_moves[-1])
+        print('\t', valued_moves[-1][1])
     
     return sorted(valued_moves, key=lambda x: x[1][0], reverse=True)
 
