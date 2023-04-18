@@ -170,13 +170,13 @@ print('\tmv_o cut', move_value_optimisation_cutoff)
 print('\tmv_o dpth:', move_value_optimisation_depth)
 print('\tignr:', 'WHITE' if ignorable == engine.WHITE else 'BLACK')
 input('start?')
-for i in range(15):
-    b.push(random.choice(list(b.moves())))
+# for i in range(15):
+#     b.push(random.choice(list(b.moves())))
 
 while 1:
     m = rank_moves(3, b)
     b.push(m[0][0])
     print(m)
     print(b.move_stack)
-    # r = input('respond: ')
-    # b.push(engine.Move.from_uci(r))
+    r = input('respond: ')
+    b.push(engine.Move.from_uci(r))
