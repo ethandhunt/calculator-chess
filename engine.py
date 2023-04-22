@@ -387,8 +387,14 @@ class Board:
         
         if move.castling or move.castle_from in [A1, A8, H1, H8] or self.piece_at(move.from_square).piece_type in [KING, ROOK]:
             self.castling_rights = self.prev_castling_rights.pop()
+    
+    def copy(self):
+        b = Board()
+        b.castling_rights = self.castling_rights
+        
         
 
+# should be immutable
 class Move:
     def __init__(self, from_square: Square, to_square: Square, promotion=None, attacking=False, castling=False, castle_from: Square=None, castle_to: Square=None, captured=None):
         self.from_square = from_square
@@ -643,8 +649,8 @@ class Piece:
         else:
             raise Exception('piece type fell through in Piece.passive_move_mask(occupied_mask)')
 
-    def attack_move_mask(self, occupied_mask, en_passant_square):
-        pass
+    def copy(self):
+        return Piece(PIECE_TO_CHAR[self.piece_type].upper() if self.side == WHITE else PIECE_TO_CHAR[self.piece_type], self.square, active=self.active)
         
     
     
