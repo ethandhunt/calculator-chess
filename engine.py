@@ -275,7 +275,7 @@ class Board:
     
     def moves(self, invert=1):
         for p in self.pieces:
-            if p.side != self.turn*invert or not p.active: continue
+            if p.side != (self.turn if invert==1 else not self.turn) or not p.active: continue
             for m in p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights):
                 yield m
     
@@ -301,7 +301,7 @@ class Board:
     def is_check(self, invert=1):
         # checks if the king of the current turn is attacked by another piece in the next turn if not blocked
         for p in self.pieces:
-            if p.piece_type != KING or p.side != self.turn*invert: continue
+            if p.piece_type != KING or p.side != (self.turn if invert==1 else not self.turn): continue
             
             for m in self.moves(invert=-1):
                 if m.captured == p.square:
@@ -309,11 +309,11 @@ class Board:
             
             return False # we have seen the king, it isn't in check
         
-        return False
+        raise ValueError('called is_check with no king')
     
-    def is_checkmate(self):
+    def is_checkmate(self, invert=1):
         drint('Board.is_checkmate() called')
-        if not self.is_check(): return False
+        if not self.is_check(invert=invert): return False
         for m in self.moves():
             self.push(m)
             if self.is_check(-1):
