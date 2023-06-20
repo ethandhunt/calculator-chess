@@ -429,6 +429,7 @@ class Move:
         # A1xA2 - from a1 to a2, capturing on a2
         # A5xB5B6 - from a5 to b6, capturing on b5 (en passant)
         # A7A8Q - from a7 to a8, promoting to queen
+        uci = uci.upper()
         try:
             if uci == 'O-O-O':
                 if context.turn == WHITE:
@@ -513,6 +514,13 @@ class Piece:
             
             if same_rank(up, right) and occupied_mask[not self.side] & BB_SQUARES[right]:
                 yield Move(self.square, right, attacking=True, captured=right)
+                
+            # en passant
+            if left == en_passant_square:
+                yield Move(self.square, left, attacking=True, captured=left-up)
+
+            if right == en_passant_square:
+                yield Move(self.square, right, attacking=True, captured=right-up)
         
         def knight_moves():
             # no wrap around, on board, not attacking own piece
