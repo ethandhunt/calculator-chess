@@ -60,6 +60,7 @@ while 1:
     
     if board.is_checkmate():
         print('checkmate')
+        break
 
     if board.is_check():
         print('check')
