@@ -13,6 +13,7 @@ while 1:
         print('commands:')
         print('help - print this help')
         print('moves - print previous moves')
+        print('AC,up to read more')
         print()
         
         if input('more? Y/aNy: ').upper() != 'Y': continue
