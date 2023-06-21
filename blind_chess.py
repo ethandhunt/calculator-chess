@@ -2,6 +2,11 @@ import engine
 
 print('type \'help\' for help text')
 
+def filter(func, iter):
+    for i in iter:
+        if func(i):
+            yield i
+
 # moves can be tested for equality using the returned tuple
 move_iden = lambda move: (move.from_square, move.to_square, move.captured)
 
