@@ -45,13 +45,16 @@ while 1:
         continue
 
     if m_text == 'moves':
-        print(board.move_stack)
+        for i in range(0,min(len(board.move_stack),8),7):
+            for j in range(7):
+                if i+j >= len(board.move_stack): break
+                print(board.move_stack[i+j])
         continue
     
     try:
         m = engine.Move.from_uci(m_text, context=board)
 
-        if move_iden(m) not in map(move_iden, board.legal_moves()):
+        if len(list(filter(lambda x: move_iden(x)==move_iden(m), board.legal_moves()))) == 0:
             print('invalid move')
             continue
 
