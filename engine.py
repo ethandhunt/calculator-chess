@@ -445,8 +445,8 @@ class Move:
                 if context.turn == BLACK:
                     return Move(E8, G8, castle_from=H8, castle_to=F8, castling=True)
 
-            attacking = 'x' in uci
-            uci = uci.replace('x', '')
+            attacking = 'X' in uci
+            uci = uci.replace('X', '')
             from_square = SQUARE_NAMES.index(uci[0:2].upper())
             to_square = SQUARE_NAMES.index(uci[2:4].upper())
             promotion = CHAR_TO_PIECE[uci[4].upper()] if len(uci) == 5 else None
