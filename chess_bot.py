@@ -4,6 +4,8 @@ import random
 
 CHECK_VALUE = 400 # better than taking a bishop (hopefully finds a check with a bishop capture later)
 
+RANDOMNESS = 10
+
 def move_value(board, move):
     if move.promotion is not None:
         return float("-inf") if board.turn != playing_for else float("inf")
@@ -21,7 +23,7 @@ def move_value(board, move):
     check = board.is_check()
     board.pop()
     
-    move_value = attack_value + position_change + check*CHECK_VALUE
+    move_value = attack_value + position_change + check*CHECK_VALUE + random.randint(0, RANDOMNESS)
     if board.turn != engine.WHITE:
         move_value *= -1 # invert weight if the move is good for black
     
@@ -63,13 +65,13 @@ def position_value(piece, square, endgame):
 def board_value(board):
     # returns material advantage
     endgame = board.endgame
-    for p in board.pieces:
-        if not p.active: continue
+    # for p in board.pieces:
+    #     if not p.active: continue
         
-        value = engine.piece_value[p.piece_type] + position_value(p, p.square, endgame)
-        total += value if p.side == engine.WHITE else -value
+    #     value = engine.piece_value[p.piece_type] + position_value(p, p.square, endgame)
+    #     total += value if p.side == engine.WHITE else -value
     
-    return sum(map(lambda x: engine.piece_value[x.piece_type]*x.active, board.pieces))
+    return sum(map(lambda x: (engine.piece_value[x.piece_type]*x.active + position_value(x, x.square, endgame))*(1 if x.side==engine.WHITE else -1), board.pieces))
 
 def get_ordered_moves(board):
     return sorted(board.legal_moves(), key=lambda x: move_value(board, x))
@@ -138,10 +140,11 @@ def minimax(depth, board, alpha=float('-inf'), beta=float('inf'), maximising=eng
 def rank_moves(depth, board, maximising=engine.WHITE):
     valued_moves = []
     for m in board.legal_moves():
+        print(m)
         board.push(m)
         valued_moves.append((m, minimax(depth, board, maximising=maximising)))
         board.pop()
-        print(*valued_moves[-1])
+        print('\t', valued_moves[-1][1])
     
     return sorted(valued_moves, key=lambda x: x[1][0], reverse=True)
 
@@ -167,6 +170,9 @@ print('\tmv_o cut', move_value_optimisation_cutoff)
 print('\tmv_o dpth:', move_value_optimisation_depth)
 print('\tignr:', 'WHITE' if ignorable == engine.WHITE else 'BLACK')
 input('start?')
+# for i in range(15):
+#     b.push(random.choice(list(b.moves())))
+
 while 1:
     m = rank_moves(3, b)
     b.push(m[0][0])

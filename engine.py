@@ -275,7 +275,7 @@ class Board:
     
     def moves(self, invert=1):
         for p in self.pieces:
-            if p.side != self.turn*invert or not p.active: continue
+            if p.side != (self.turn if invert==1 else not self.turn) or not p.active: continue
             for m in p.moves(self.occupied_mask, self.en_passant_square, self.castling_rights):
                 yield m
     
@@ -301,7 +301,7 @@ class Board:
     def is_check(self, invert=1):
         # checks if the king of the current turn is attacked by another piece in the next turn if not blocked
         for p in self.pieces:
-            if p.piece_type != KING or p.side != self.turn*invert: continue
+            if p.piece_type != KING or p.side != (self.turn if invert==1 else not self.turn): continue
             
             for m in self.moves(invert=-1):
                 if m.captured == p.square:
@@ -309,11 +309,11 @@ class Board:
             
             return False # we have seen the king, it isn't in check
         
-        return False
+        raise ValueError('called is_check with no king')
     
-    def is_checkmate(self):
+    def is_checkmate(self, invert=1):
         drint('Board.is_checkmate() called')
-        if not self.is_check(): return False
+        if not self.is_check(invert=invert): return False
         for m in self.moves():
             self.push(m)
             if self.is_check(-1):
@@ -387,8 +387,14 @@ class Board:
         
         if move.castling or move.castle_from in [A1, A8, H1, H8] or self.piece_at(move.from_square).piece_type in [KING, ROOK]:
             self.castling_rights = self.prev_castling_rights.pop()
+    
+    def copy(self):
+        b = Board()
+        b.castling_rights = self.castling_rights
+        
         
 
+# should be immutable
 class Move:
     def __init__(self, from_square: Square, to_square: Square, promotion=None, attacking=False, castling=False, castle_from: Square=None, castle_to: Square=None, captured=None):
         self.from_square = from_square
@@ -423,6 +429,7 @@ class Move:
         # A1xA2 - from a1 to a2, capturing on a2
         # A5xB5B6 - from a5 to b6, capturing on b5 (en passant)
         # A7A8Q - from a7 to a8, promoting to queen
+        uci = uci.upper()
         try:
             if uci == 'O-O-O':
                 if context.turn == WHITE:
@@ -438,8 +445,8 @@ class Move:
                 if context.turn == BLACK:
                     return Move(E8, G8, castle_from=H8, castle_to=F8, castling=True)
 
-            attacking = 'x' in uci
-            uci = uci.replace('x', '')
+            attacking = 'X' in uci
+            uci = uci.replace('X', '')
             from_square = SQUARE_NAMES.index(uci[0:2].upper())
             to_square = SQUARE_NAMES.index(uci[2:4].upper())
             promotion = CHAR_TO_PIECE[uci[4].upper()] if len(uci) == 5 else None
@@ -507,6 +514,13 @@ class Piece:
             
             if same_rank(up, right) and occupied_mask[not self.side] & BB_SQUARES[right]:
                 yield Move(self.square, right, attacking=True, captured=right)
+                
+            # en passant
+            if left == en_passant_square:
+                yield Move(self.square, left, attacking=True, captured=left-up)
+
+            if right == en_passant_square:
+                yield Move(self.square, right, attacking=True, captured=right-up)
         
         def knight_moves():
             # no wrap around, on board, not attacking own piece
@@ -643,8 +657,8 @@ class Piece:
         else:
             raise Exception('piece type fell through in Piece.passive_move_mask(occupied_mask)')
 
-    def attack_move_mask(self, occupied_mask, en_passant_square):
-        pass
+    def copy(self):
+        return Piece(PIECE_TO_CHAR[self.piece_type].upper() if self.side == WHITE else PIECE_TO_CHAR[self.piece_type], self.square, active=self.active)
         
     
     
