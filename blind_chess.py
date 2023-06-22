@@ -18,6 +18,7 @@ while 1:
         print('commands:')
         print('help - print this help')
         print('moves - print previous moves')
+        print('debugt - toggle debug flag')
         print('AC,up to read more')
         print()
         
@@ -49,6 +50,11 @@ while 1:
             for j in range(7):
                 if i+j >= len(board.move_stack): break
                 print(board.move_stack[i+j])
+            if j == 6: input('...')
+        continue
+    
+    if m_text == 'debugt':
+        engine.debug = not engine.debug
         continue
     
     try:
