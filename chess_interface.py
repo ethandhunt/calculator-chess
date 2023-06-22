@@ -63,13 +63,13 @@ def position_value(piece, square, endgame):
 def board_value(board):
     # returns material advantage
     endgame = board.endgame
-    # for p in board.pieces:
-    #     if not p.active: continue
+    for p in board.pieces:
+        if not p.active: continue
         
-    #     value = engine.piece_value[p.piece_type] + position_value(p, p.square, endgame)
-    #     total += value if p.side == engine.WHITE else -value
+        value = engine.piece_value[p.piece_type] + position_value(p, p.square, endgame)
+        total += value if p.side == engine.WHITE else -value
     
-    return sum(map(lambda x: (engine.piece_value[x.piece_type]*x.active + position_value(x, x.square, endgame))*(1 if x.side==engine.WHITE else -1), board.pieces))
+    return sum(map(lambda x: engine.piece_value[x.piece_type]*x.active, board.pieces))
 
 def get_ordered_moves(board):
     return sorted(board.legal_moves(), key=lambda x: move_value(board, x))
@@ -167,13 +167,10 @@ print('\tmv_o cut', move_value_optimisation_cutoff)
 print('\tmv_o dpth:', move_value_optimisation_depth)
 print('\tignr:', 'WHITE' if ignorable == engine.WHITE else 'BLACK')
 input('start?')
-for i in range(15):
-    b.push(random.choice(list(b.moves())))
-
 while 1:
     m = rank_moves(3, b)
     b.push(m[0][0])
     print(m)
     print(b.move_stack)
-    # r = input('respond: ')
-    # b.push(engine.Move.from_uci(r))
+    r = input('respond: ')
+    b.push(engine.Move.from_uci(r))
